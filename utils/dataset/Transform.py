@@ -117,7 +117,6 @@ class Transforms(TransformsBase):
             transforms.Resize((size, size), interpolation=InterpolationMode.BICUBIC),  # 3 is bicubic
             transforms.RandomHorizontalFlip(p=horizontal_flip_ratio),
             transforms.ToTensor(),
-            # todo 确定灰度图数据集的正则化参数
             transforms.Normalize(mean=[0.48787], std=[0.0394])])
 
         label_tansform = transforms.Compose([
