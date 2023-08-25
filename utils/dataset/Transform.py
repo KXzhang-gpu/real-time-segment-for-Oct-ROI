@@ -15,14 +15,16 @@ class TransformsBase(object):
     ----------
     crop_factor: float
         crop image size to (h + h * factor, w + w * factor) where w,h is the size of bbox
-    radom_crop_scale_ratio: float
+    zero_crop_scale_ratio: float
         ratio of (w, h) rescale based on bbox before zero crop
-    random_crop_shift_ratio: float
+    zero_crop_shift_ratio: float
         ratio of (x0, y0) shift based on bbox before zero crop
-    crop_scale_factor: list
+    zero_crop_scale_factor: list
         the range of scale change
-    crop_shift_factor: list
+    zero_crop_shift_factor: list
         the range of shift change
+    zero_crop_is_center: bool
+        To ensure that the center of new bbox is object we want to segment
     add_noise_ratio: float
         ratio of adding noise for image
     add_noise_snr: list
@@ -34,14 +36,15 @@ class TransformsBase(object):
 
     default_hyper_params = dict(
         # todo how to design transform params
-        crop_factor=[0.5, 5],
-        radom_crop_shift_ratio=0.6,
-        random_crop_scale_ratio=0.6,
-        crop_shift_factor=[-0.2, 0.2],
-        crop_scale_factor=[0.8, 1.2],
+        crop_factor=[0.5, 9],
+        zero_crop_shift_ratio=0.6,
+        zero_crop_scale_ratio=0.6,
+        zero_crop_shift_factor=[-0.2, 0.2],
+        zero_crop_scale_factor=[0.9, 1.8],
+        zero_crop_is_center=True,
         add_noise_ratio=0.05,
         add_noise_snr=[0.9, 1],
-        resize=224,
+        resize=512,
         horizontal_flip_ratio=0.5,
     )
 
@@ -115,7 +118,7 @@ class Transforms(TransformsBase):
             transforms.RandomHorizontalFlip(p=horizontal_flip_ratio),
             transforms.ToTensor(),
             # todo 确定灰度图数据集的正则化参数
-            transforms.Normalize(mean=[0.227], std=[0.1935])])
+            transforms.Normalize(mean=[0.5], std=[1])])
 
         label_tansform = transforms.Compose([
             transforms.ToPILImage(),
@@ -143,7 +146,7 @@ class Transforms(TransformsBase):
             transforms.ToPILImage(),
             transforms.Resize((size, size), interpolation=InterpolationMode.NEAREST),  # 3 is bicubic
             transforms.ToTensor()])
-        return [data_transform, transforms, label_tansform]
+        return [data_transform, image_tansform, label_tansform]
 
 
 class Init_Crop(TransformsBase):
@@ -157,13 +160,13 @@ class Init_Crop(TransformsBase):
         label = data["label"]
         x, y, w, h = cv2.boundingRect((label[0]).astype(np.uint8))
         _, y_max, x_max = image.shape
-        factor = np.random.uniform(self.factor[0], self.factor[1])
-        x_min = max(0, x - int(w * factor))
-        y_min = max(0, y - int(h * factor))
+        w_factor, h_factor = np.random.uniform(self.factor[0], self.factor[1], size=2)
+        x_min = max(0, x - int(w * w_factor))
+        y_min = max(0, y - int(h * h_factor))
         x = np.random.randint(x_min, x + 1)
         y = np.random.randint(y_min, y + 1)
-        w = min(int(w + factor * w), x_max - x)
-        h = min(int(h + factor * h), y_max - y)
+        w = min(int(w + w_factor * w), x_max - x)
+        h = min(int(h + h_factor * h), y_max - y)
         image = image[:, y: y + h, x: x + w]
         label = label[:, y: y + h, x: x + w]
         data["image"] = image
@@ -172,24 +175,29 @@ class Init_Crop(TransformsBase):
 
 
 class RadomZeroCrop(TransformsBase):
+    """
+    Set background to 0 according to a random bbox(size, location) to mark the ROI
+    """
     def __init__(self, **kwargs):
         super(RadomZeroCrop, self).__init__()
         self.update(**kwargs)
-        self.shift_ratio = self.hyper_params["radom_crop_shift_ratio"]
-        self.scale_ratio = self.hyper_params["random_crop_scale_ratio"]
-        self.shift_factor = self.hyper_params["crop_shift_factor"]
-        self.scale_factor = self.hyper_params["crop_scale_factor"]
+        self.shift_ratio = self.hyper_params["zero_crop_shift_ratio"]
+        self.scale_ratio = self.hyper_params["zero_crop_scale_ratio"]
+        self.shift_factor = self.hyper_params["zero_crop_shift_factor"]
+        self.scale_factor = self.hyper_params["zero_crop_scale_factor"]
+        self.is_center = self.hyper_params["zero_crop_is_center"]
 
     def __call__(self, data):
         image = data["image"]
         label = data["label"]
         # x, y, w, h = [int(float_num) for float_num in data["bbox"]]
         x, y, w, h = cv2.boundingRect((label[0]).astype(np.uint8))
+        x_center_times2 = 2 * x + w
+        y_center_times2 = 2 * y + h
         _, y_max, x_max = image.shape
         crop_mask = np.zeros(image.shape)
         _MAX_TRY = 20
 
-        # todo SA1B中过小的mask可能也需要filt
         for i in range(_MAX_TRY + 1):
             if i == _MAX_TRY:
                 crop_mask[:, y:y + h, x:x + w] = 1
@@ -212,6 +220,9 @@ class RadomZeroCrop(TransformsBase):
                 w_ = min(int(w * w_rng), x_max - x_)
                 h_ = min(int(h * h_rng), y_max - y_)
 
+            if self.is_center:
+                x_, y_, w_, h_ = self.centralization(x_, y_, w_, h_, x_center_times2, y_center_times2)
+
             crop_mask[:, y_:y_ + h_, x_:x_ + w_] = 1
             label_ = deepcopy(label)
             label_[crop_mask == 0] = 0
@@ -226,6 +237,26 @@ class RadomZeroCrop(TransformsBase):
         data["image"] = image
         data["label"] = label
         return data
+
+    @staticmethod
+    def centralization(x, y, w, h, x_c_2, y_c_2):
+        """
+        change the center of a given bbox
+        Parameters
+        ----------
+        x, y, w, h: bbox
+        x_c_2, y_c_2: new center times 2
+        Returns
+        -------
+        new centralized bbox
+        """
+        x_offset = 2 * x + w - x_c_2
+        y_offset = 2 * y + h - y_c_2
+        if x_offset:
+            w = w - x_offset
+        if y_offset:
+            h = h - y_offset
+        return x, y, w, h
 
 
 class AddPepperNoise(TransformsBase):

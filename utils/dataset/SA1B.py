@@ -29,7 +29,8 @@ class SA1B(Dataset):
         self.image_list = open(os.path.join(self.dataset_root, self.split + '.txt')).readlines()
 
         # load the data
-        self.max_area_factor = 0.8
+        # self.max_area_factor = 0.8
+        # self.min_area = 1000
         self._ensure_cache(update_cache)
 
     def __len__(self):
@@ -47,6 +48,8 @@ class SA1B(Dataset):
             label_rle = data["annotations"][label_id]["segmentation"]
             label = np.array(mask_utils.decode(label_rle), dtype=np.float32)
             # bbox = data["annotations"][label_id]["bbox"]
+            # predicted_iou = data["annotations"][label_id]["predicted_iou"]
+            # stability_score = data["annotations"][label_id]["stability_score"]
 
         # image and label, shape=(1, H, W)
         # image_range=(0, 255), label_range=(0, 1)
@@ -56,6 +59,10 @@ class SA1B(Dataset):
             image=image,
             label=label
         )
+
+        mask = image[label == 1]
+        print(mask.mean())
+
         # data augment
         if self.transform:
             data = self.transform(data)
@@ -80,7 +87,7 @@ class SA1B(Dataset):
 
                     # index of masks in image
                     for i in range(len(labels["annotations"])):
-                        if self._is_filted(labels["image"], labels["annotations"][i]):
+                        if self._is_filted(labels["image"], labels["annotations"][i], image_path):
                             record = dict(
                                 image_path=image_path,
                                 label_path=label_path,
@@ -93,19 +100,37 @@ class SA1B(Dataset):
             with open(cache_file, 'wb') as f:
                 pickle.dump(self.data_info_list, f)
 
-    def _is_filted(self, image_info: dict, annotation: dict):
+    @staticmethod
+    def _is_filted(image_info: dict, annotation: dict, image_path: str) -> bool:
         """
-        filt background masks (having a relatively large bbox)
+        filt invaild masks (such as background or some trivial objects)
         """
         w, h = image_info["width"], image_info["height"]
-        bbox = annotation["bbox"]
-        # todo
-        bbox_area = bbox[2]*bbox[3]
-        total_area = w*h
-        if bbox_area > total_area * self.max_area_factor:
+        _, _, w_b, h_b = annotation["bbox"]
+        # todo: check the condition is set correctly or not
+        bbox_area = w_b * h_b
+        total_area = w * h
+        # background objects such as sky, river often touch the boundary
+        if w_b > 0.95 * w:
             return False
-        else:
-            return True
+        if h_b > 0.95 * h:
+            return False
+
+        # filt masks which are either too small or too large
+        if bbox_area > total_area * 0.8:
+            return False
+        if bbox_area < total_area * 0.04:
+            return False
+
+        # color filter:
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        label_rle = annotation["segmentation"]
+        label = np.array(mask_utils.decode(label_rle), dtype=np.float32)
+        mask = image[label == 1]
+        if mask.mean() < 50:
+            return False
+
+        return True
 
 
 import matplotlib.pyplot as plt
@@ -116,13 +141,14 @@ if __name__ == '__main__':
     start_time = time()
     sa1b = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=Transforms(split='train'))
     sa1b2 = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=None)
-    idx = 1000
+    idx = 60
     data = sa1b[idx]
     data2 = sa1b2[idx]
     image = data["image"]
     label = data["label"]
-    print(torch.sum(label))
-    print(np.sum(data2["label"]))
+    print(len(sa1b))
+    # print(data["predicted_iou"])
+    # print(data["stability_score"])
     plt.subplot(221)
     plt.imshow(image[0], cmap='gray')
     plt.subplot(222)
