@@ -118,7 +118,7 @@ class Transforms(TransformsBase):
             transforms.RandomHorizontalFlip(p=horizontal_flip_ratio),
             transforms.ToTensor(),
             # todo 确定灰度图数据集的正则化参数
-            transforms.Normalize(mean=[0.5], std=[1])])
+            transforms.Normalize(mean=[0.48787], std=[0.0394])])
 
         label_tansform = transforms.Compose([
             transforms.ToPILImage(),
@@ -139,8 +139,7 @@ class Transforms(TransformsBase):
             transforms.ToPILImage(),
             transforms.Resize((size, size), interpolation=InterpolationMode.BICUBIC),  # 3 is bicubic
             transforms.ToTensor(),
-            # todo 确定灰度图数据集的正则化参数
-            transforms.Normalize(mean=[0.227], std=[0.1935])])
+            transforms.Normalize(mean=[0.48787], std=[0.0394])])
 
         label_tansform = transforms.Compose([
             transforms.ToPILImage(),
