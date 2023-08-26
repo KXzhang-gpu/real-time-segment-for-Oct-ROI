@@ -20,6 +20,8 @@ class SA1B(Dataset):
             the type of data usage, includes 'train' 'val' and 'test'
         transform: class
             transform used for dataset
+        update_cache: bool
+            whether update cache for your dataset. if you have changes in data or code, remember to set this parameter
     """
     def __init__(self, dataset_root, split, transform=None, update_cache=False):
         super(SA1B, self).__init__()
@@ -141,12 +143,14 @@ if __name__ == '__main__':
     start_time = time()
     sa1b = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=Transforms(split='train'))
     sa1b2 = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=None)
-    idx = 60
+    idx = 7
     data = sa1b[idx]
     data2 = sa1b2[idx]
     image = data["image"]
     label = data["label"]
     print(len(sa1b))
+    print(torch.min(image))
+    print(torch.max(image))
     # print(data["predicted_iou"])
     # print(data["stability_score"])
     plt.subplot(221)

@@ -57,6 +57,9 @@ class TransformsBase(object):
 
 
 class Transforms(TransformsBase):
+    """
+    build tranforms for dataset
+    """
     def __init__(self, split='train', **kwargs):
         super(Transforms, self).__init__()
         self.split = split
@@ -117,7 +120,7 @@ class Transforms(TransformsBase):
             transforms.Resize((size, size), interpolation=InterpolationMode.BICUBIC),  # 3 is bicubic
             transforms.RandomHorizontalFlip(p=horizontal_flip_ratio),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.48787], std=[0.0394])])
+            Normalization()])
 
         label_tansform = transforms.Compose([
             transforms.ToPILImage(),
@@ -138,7 +141,7 @@ class Transforms(TransformsBase):
             transforms.ToPILImage(),
             transforms.Resize((size, size), interpolation=InterpolationMode.BICUBIC),  # 3 is bicubic
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.48787], std=[0.0394])])
+            Normalization()])
 
         label_tansform = transforms.Compose([
             transforms.ToPILImage(),
@@ -148,6 +151,9 @@ class Transforms(TransformsBase):
 
 
 class Init_Crop(TransformsBase):
+    """
+    crop signal object from all instence segment label
+    """
     def __init__(self, **kwargs):
         super(Init_Crop, self).__init__()
         self.update(**kwargs)
@@ -261,7 +267,6 @@ class AddPepperNoise(TransformsBase):
     """
     add pepper nosie to image
     """
-
     def __init__(self, **kwargs):
         super(AddPepperNoise, self).__init__()
         self.update(**kwargs)
@@ -284,11 +289,27 @@ class AddPepperNoise(TransformsBase):
 
 
 class ImageAug(TransformsBase):
+    """
+    not complete yet
+    """
     def __init__(self):
         super(ImageAug, self).__init__()
 
     def __call__(self, image):
         return image
+
+
+class Normalization(TransformsBase):
+    """
+    normalize the image to range:(0,1)
+    """
+    def __init__(self):
+        super(Normalization, self).__init__()
+
+    def __call__(self, image):
+        i_max = torch.max(image)
+        i_min = torch.min(image)
+        return (image-i_min) / (i_max - i_min)
 
 
 if __name__ == '__main__':
