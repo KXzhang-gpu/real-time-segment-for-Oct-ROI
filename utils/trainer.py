@@ -51,19 +51,12 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
 
         with autocast(enabled=args.amp):
             predict = model(image)
-            # assert not torch.isnan(predict).any(), 'predict nan'
             if args.stage == 'supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, target, softmax=False)
-                # train_loop.set_postfix(ce_loss='{:.3f}'.format(loss1),
-                #                        dice_loss='{:.3f}'.format(loss2),
-                #                        refresh=False)
             elif args.stage == 'weak_supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, image, args.threshold)
-                # train_loop.set_postfix(projection_loss='{:.3f}'.format(loss1),
-                #                        pairwise_loss='{:.3f}'.format(loss2),
-                #                        refresh=False)
             loss = 1.0 * loss1 + 1.0 * loss2
 
         if args.amp:
