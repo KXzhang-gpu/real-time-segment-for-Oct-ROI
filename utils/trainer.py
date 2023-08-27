@@ -6,6 +6,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import GradScaler, autocast
 import numpy as np
+from tqdm import tqdm
 
 from utils.loss.boxloss import Pairwise_Loss, Projection_Loss
 from utils.loss.dice import DiceLoss, dice
@@ -39,25 +40,30 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
     else:
         raise ValueError(r"Can't find the corresponding stage for training")
 
-    start_time = time.time()
     run_loss = AverageMeter()
-    for idx, batch_data in enumerate(loader):
+    train_loop = tqdm(loader, desc='Epoch{}'.format(epoch))
+    for batch_data in train_loop:
         image, target = batch_data["image"], batch_data["label"]
         image = image.to(torch.device(args.device))
         target = target.to(torch.device(args.device))
-        for param in model.parameters():
-            param.grad = None
+        optimizer.zero_grad()
+        start_time = time.time()
 
         with autocast(enabled=args.amp):
             predict = model(image)
+            # assert not torch.isnan(predict).any(), 'predict nan'
             if args.stage == 'supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, target, softmax=False)
-                print('ce_loss: {:.3f} dice_loss: {:.3f}'.format(loss1, loss2))
+                # train_loop.set_postfix(ce_loss='{:.3f}'.format(loss1),
+                #                        dice_loss='{:.3f}'.format(loss2),
+                #                        refresh=False)
             elif args.stage == 'weak_supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, image, args.threshold)
-                print('projection_loss: {:.3f} pairwise_loss: {:.3f}'.format(loss1, loss2))
+                # train_loop.set_postfix(projection_loss='{:.3f}'.format(loss1),
+                #                        pairwise_loss='{:.3f}'.format(loss2),
+                #                        refresh=False)
             loss = 1.0 * loss1 + 1.0 * loss2
 
         if args.amp:
@@ -70,19 +76,14 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
 
         run_loss.update(loss.item(), n=args.batch_size)
         if args.rank == 0:
-            print(
-                "Epoch {}/{} {}/{}".format(epoch, args.max_epochs, idx, len(loader)),
-                "loss: {:.4f}".format(loss.item()),
-                "lr: {:.8f}".format(optimizer.param_groups[0]['lr']),
-                "time {:.2f}s".format(time.time() - start_time),
-            )
-        start_time = time.time()
-        for param in model.parameters():
-            param.grad = None
+            train_loop.set_postfix(loss='{:.4f}'.format(loss.item()),
+                                   lr='{:.8f}'.format(optimizer.param_groups[0]['lr']),
+                                   time='{:.2f}s'.format(time.time() - start_time))
+
     return run_loss.avg
 
 
-def val_epoch(model, loader, epoch, args):
+def val_epoch(model, loader, args):
     model.eval()
     start_time = time.time()
     run_acc = AverageMeter()
@@ -96,7 +97,8 @@ def val_epoch(model, loader, epoch, args):
         raise ValueError(r"Can't find the corresponding stage for training")
     run_loss = AverageMeter()
     with torch.no_grad():
-        for idx, batch_data in enumerate(loader):
+        val_loop = tqdm(loader, desc='Test')
+        for idx, batch_data in val_loop:
             image, target = batch_data["image"], batch_data["label"]
 
             image, target = image.cuda(args.rank), target.cuda(args.rank)
@@ -106,11 +108,11 @@ def val_epoch(model, loader, epoch, args):
                 if args.stage == 'supervise':
                     loss1 = loss_func1(predict, target)
                     loss2 = loss_func2(predict, target, softmax=False)
-                    print('ce_loss: {:.3f} dice_loss: {:.3f}'.format(loss1, loss2))
+                    val_loop.set_postfix(ce_loss='{:.3f}'.format(loss1), dice_loss='{:.3f}'.format(loss2))
                 elif args.stage == 'weak_supervise':
                     loss1 = loss_func1(predict, target)
                     loss2 = loss_func2(predict, image, args.threshold)
-                    print('projection_loss: {:.3f} pairwise_loss: {:.3f}'.format(loss1, loss2))
+                    val_loop.set_postfix(projection_loss='{:.3f}'.format(loss1), pairwise_loss='{:.3f}'.format(loss2))
                 loss = 1.0 * loss1 + 1.0 * loss2
 
                 # sigmoid for dice
@@ -132,12 +134,9 @@ def val_epoch(model, loader, epoch, args):
             run_acc.update(avg_acc, n=args.batch_size)
             run_loss.update(loss.item(), n=args.batch_size)
             if args.rank == 0:
-                print(
-                    "Val {}/{} {}/{}".format(epoch, args.max_epochs, idx, len(loader)),
-                    "dice:", avg_acc,
-                    'loss:', loss.numpy(),
-                    "time {:.2f}s".format(time.time() - start_time),
-                )
+                val_loop.set_postfix(loss='{:.4f}'.format(loss.numpy()),
+                                     acc=avg_acc,
+                                     time='{:.2f}s'.format(time.time() - start_time))
             start_time = time.time()
     return run_acc.avg, run_loss.avg
 
@@ -228,7 +227,7 @@ def run_training(model,
 
     val_acc_max = 0.0
     for epoch in range(start_epoch, args.max_epochs):
-        print(args.rank, time.ctime(), "Epoch:", epoch)
+        print(args.rank, "Epoch:", epoch)
         epoch_time = time.time()
         train_loss = train_epoch(model=model,
                                  loader=train_loader,
@@ -239,12 +238,13 @@ def run_training(model,
 
         spend_time += time.time() - epoch_time
         if args.rank == 0:
+            # update epoch output info
             print(
                 "Final training  {}/{}".format(epoch, args.max_epochs - 1),
                 "loss: {:.4f}".format(train_loss),
-                "time {:.2f}s".format(time.time() - epoch_time),)
+                "time {:.2f}s".format(time.time() - epoch_time), )
 
-            with open(os.path.join(args.logdir, args.model_name+"_log.txt"), mode="a", encoding="utf-8") as f:
+            with open(os.path.join(args.logdir, args.model_name + "_log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(
                     "Final training:{}/{},".format(epoch, args.max_epochs - 1) + "loss:{}".format(train_loss) + "\n")
         if args.rank == 0 and writer is not None:
@@ -256,7 +256,6 @@ def run_training(model,
             epoch_time = time.time()
             val_avg_acc, run_loss = val_epoch(model=model,
                                               loader=val_loader,
-                                              epoch=epoch,
                                               args=args)
 
             if args.rank == 0:
@@ -297,4 +296,3 @@ def run_training(model,
             if scheduler is not None:
                 scheduler.step(-val_avg_acc)
     print("Training Finished !, Best Accuracy: ", val_acc_max, "Total time: {} s.".format(round(spend_time)))
-
