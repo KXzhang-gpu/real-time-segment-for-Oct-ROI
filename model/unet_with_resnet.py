@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from model.utils.common_block import conv_bn_relu
+
 
 class Residual_block(nn.Module):
     def __init__(self, input_channels, num_channels, strides=1, use_conv_1=False):
@@ -11,8 +13,8 @@ class Residual_block(nn.Module):
             self.conv3 = conv_bn_relu(input_channels,
                                       num_channels,
                                       stride=strides,
-                                      kszie=1,
-                                      pad=0,
+                                      kernel_size=1,
+                                      padding=0,
                                       has_bn=True,
                                       has_relu=False,
                                       bias=False)
@@ -21,16 +23,16 @@ class Residual_block(nn.Module):
         self.conv1 = conv_bn_relu(input_channels,
                                   num_channels,
                                   stride=strides,
-                                  kszie=3,
-                                  pad=1,
+                                  kernel_size=3,
+                                  padding=1,
                                   has_bn=True,
                                   has_relu=True,
                                   bias=False)
         self.conv2 = conv_bn_relu(num_channels,
                                   num_channels,
                                   stride=1,
-                                  kszie=3,
-                                  pad=1,
+                                  kernel_size=3,
+                                  padding=1,
                                   has_bn=True,
                                   has_relu=False,
                                   bias=False)
@@ -47,45 +49,6 @@ class Residual_block(nn.Module):
         return x
 
 
-class conv_bn_relu(nn.Module):
-    def __init__(self,
-                 in_channel,
-                 out_channel,
-                 stride=1,
-                 kszie=3,
-                 pad=0,
-                 has_bn=True,
-                 has_relu=True,
-                 bias=True,
-                 groups=1):
-        super(conv_bn_relu, self).__init__()
-        self.conv = nn.Conv2d(in_channel,
-                              out_channel,
-                              kernel_size=kszie,
-                              stride=stride,
-                              padding=pad,
-                              bias=bias,
-                              groups=groups)
-
-        if has_bn:
-            self.bn = nn.BatchNorm2d(out_channel)
-        else:
-            self.bn = None
-
-        if has_relu:
-            self.relu = nn.ReLU()
-        else:
-            self.relu = None
-
-    def forward(self, x):
-        x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.relu is not None:
-            x = self.relu(x)
-        return x
-
-
 class UNet(nn.Module):
     def __init__(self, n_classes=1, block=Residual_block, bilinear=False):
         super(UNet, self).__init__()
@@ -95,24 +58,24 @@ class UNet(nn.Module):
             conv_bn_relu(1,
                          32,
                          stride=2,
-                         kszie=7,
-                         pad=3,
+                         kernel_size=7,
+                         padding=3,
                          has_bn=True,
                          has_relu=True,
                          bias=False),
             conv_bn_relu(32,
                          32,
                          stride=1,
-                         kszie=3,
-                         pad=1,
+                         kernel_size=3,
+                         padding=1,
                          has_bn=True,
                          has_relu=True,
                          bias=False),
             conv_bn_relu(32,
                          32,
                          stride=1,
-                         kszie=3,
-                         pad=1,
+                         kernel_size=3,
+                         padding=1,
                          has_bn=True,
                          has_relu=True,
                          bias=False)))
@@ -129,9 +92,9 @@ class UNet(nn.Module):
         self.up5 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.outc = OutConv(32, n_classes)
 
-    def _resnet_block(self, block, input_channels, num_channels, num_residuals, strides):
-        stage = []
-        stage.append(block(input_channels, num_channels, strides, True))
+    @staticmethod
+    def _resnet_block(block, input_channels, num_channels, num_residuals, strides):
+        stage = [block(input_channels, num_channels, strides, True)]
         for i in range(1, num_residuals):
             stage.append(block(num_channels, num_channels, 1, False))
         return nn.Sequential(*stage)
