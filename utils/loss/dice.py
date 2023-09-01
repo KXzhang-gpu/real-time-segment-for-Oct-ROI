@@ -9,7 +9,8 @@ class DiceLoss(nn.Module):
         super(DiceLoss, self).__init__()
         self.n_classes = n_classes
 
-    def _dice_loss(self, score, target):
+    @staticmethod
+    def _dice_loss(score, target):
         target = target.float()
         smooth = 1e-5
         intersect = torch.sum(score * target)

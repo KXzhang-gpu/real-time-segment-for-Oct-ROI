@@ -43,6 +43,7 @@ class SA1B(Dataset):
         image_path = record["image_path"]
         label_path = record["label_path"]
         label_id = record["label_id"]
+        print(image_path)
 
         image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         with open(label_path) as data_json:
@@ -61,9 +62,6 @@ class SA1B(Dataset):
             image=image,
             label=label
         )
-
-        mask = image[label == 1]
-        print(mask.mean())
 
         # data augment
         if self.transform:
@@ -89,7 +87,7 @@ class SA1B(Dataset):
 
                     # index of masks in image
                     for i in range(len(labels["annotations"])):
-                        if self._is_filted(labels["image"], labels["annotations"][i], image_path):
+                        if self._is_filted(labels["image"], labels["annotations"][i]):
                             record = dict(
                                 image_path=image_path,
                                 label_path=label_path,
@@ -103,34 +101,33 @@ class SA1B(Dataset):
                 pickle.dump(self.data_info_list, f)
 
     @staticmethod
-    def _is_filted(image_info: dict, annotation: dict, image_path: str) -> bool:
+    def _is_filted(image_info: dict, annotation: dict) -> bool:
         """
         filt invaild masks (such as background or some trivial objects)
         """
         w, h = image_info["width"], image_info["height"]
-        _, _, w_b, h_b = annotation["bbox"]
+        x_b, y_b, w_b, h_b = annotation["bbox"]
         # todo: check the condition is set correctly or not
         bbox_area = w_b * h_b
-        total_area = w * h
+
         # background objects such as sky, river often touch the boundary
         if w_b > 0.95 * w:
             return False
         if h_b > 0.95 * h:
             return False
 
-        # filt masks which are either too small or too large
-        if bbox_area > total_area * 0.8:
-            return False
-        if bbox_area < total_area * 0.04:
+        # filt masks which are either too small
+        if bbox_area < 50000:
+            # 224 * 224 = 50176
             return False
 
-        # color filter:
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        label_rle = annotation["segmentation"]
-        label = np.array(mask_utils.decode(label_rle), dtype=np.float32)
-        mask = image[label == 1]
-        if mask.mean() < 50:
-            return False
+        # corner filter
+        if x_b <= 10:
+            if y_b <= 10 or y_b + h_b >= h - 10:
+                return False
+        if x_b + w_b >= w - 10:
+            if y_b <= 10 or y_b + h_b >= h - 10:
+                return False
 
         return True
 
@@ -143,7 +140,7 @@ if __name__ == '__main__':
     start_time = time()
     sa1b = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=Transforms(split='train'))
     sa1b2 = SA1B(r'D:\Downloads\OCT\Program\datasets\SA1B', split='test', transform=None)
-    idx = 7
+    idx = 6
     data = sa1b[idx]
     data2 = sa1b2[idx]
     image = data["image"]

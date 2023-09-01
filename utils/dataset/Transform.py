@@ -21,8 +21,8 @@ class TransformsBase(object):
         ratio of (x0, y0) shift based on bbox before zero crop
     zero_crop_scale_factor: list
         the range of scale change
-    zero_crop_shift_factor: list
-        the range of shift change
+    zero_crop_shift: list
+        the range of shift change(unit: pixel)
     zero_crop_is_center: bool
         To ensure that the center of new bbox is object we want to segment
     add_noise_ratio: float
@@ -36,15 +36,13 @@ class TransformsBase(object):
 
     default_hyper_params = dict(
         # todo how to design transform params
-        crop_factor=[0.5, 9],
         zero_crop_shift_ratio=0.6,
         zero_crop_scale_ratio=0.6,
-        zero_crop_shift_factor=[-0.2, 0.2],
-        zero_crop_scale_factor=[0.9, 1.8],
-        zero_crop_is_center=True,
+        zero_crop_shift=[-10, 10],
+        zero_crop_scale_factor=[1, 1.5],
         add_noise_ratio=0.05,
         add_noise_snr=[0.9, 1],
-        resize=512,
+        resize=224,
         horizontal_flip_ratio=0.5,
     )
 
@@ -157,20 +155,17 @@ class Init_Crop(TransformsBase):
     def __init__(self, **kwargs):
         super(Init_Crop, self).__init__()
         self.update(**kwargs)
-        self.factor = self.hyper_params["crop_factor"]
 
     def __call__(self, data):
         image = data["image"]
         label = data["label"]
         x, y, w, h = cv2.boundingRect((label[0]).astype(np.uint8))
         _, y_max, x_max = image.shape
-        w_factor, h_factor = np.random.uniform(self.factor[0], self.factor[1], size=2)
-        x_min = max(0, x - int(w * w_factor))
-        y_min = max(0, y - int(h * h_factor))
-        x = np.random.randint(x_min, x + 1)
-        y = np.random.randint(y_min, y + 1)
-        w = min(int(w + w_factor * w), x_max - x)
-        h = min(int(h + h_factor * h), y_max - y)
+        diagonal = int(np.sqrt(h*h + w*w))
+        x = max(0, x - diagonal//2)
+        y = max(0, y - diagonal//2)
+        w = min(int(w + diagonal), x_max - x)
+        h = min(int(h + diagonal), y_max - y)
         image = image[:, y: y + h, x: x + w]
         label = label[:, y: y + h, x: x + w]
         data["image"] = image
@@ -187,17 +182,17 @@ class RadomZeroCrop(TransformsBase):
         self.update(**kwargs)
         self.shift_ratio = self.hyper_params["zero_crop_shift_ratio"]
         self.scale_ratio = self.hyper_params["zero_crop_scale_ratio"]
-        self.shift_factor = self.hyper_params["zero_crop_shift_factor"]
+        self.shift_factor = self.hyper_params["zero_crop_shift"]
         self.scale_factor = self.hyper_params["zero_crop_scale_factor"]
-        self.is_center = self.hyper_params["zero_crop_is_center"]
+        # self.is_center = self.hyper_params["zero_crop_is_center"]
 
     def __call__(self, data):
         image = data["image"]
         label = data["label"]
         # x, y, w, h = [int(float_num) for float_num in data["bbox"]]
         x, y, w, h = cv2.boundingRect((label[0]).astype(np.uint8))
-        x_center_times2 = 2 * x + w
-        y_center_times2 = 2 * y + h
+        # x_center_times2 = 2 * x + w
+        # y_center_times2 = 2 * y + h
         _, y_max, x_max = image.shape
         crop_mask = np.zeros(image.shape)
         _MAX_TRY = 20
@@ -213,8 +208,8 @@ class RadomZeroCrop(TransformsBase):
             if np.random.rand(1) < self.shift_ratio:
                 x_rng = np.random.uniform(self.shift_factor[0], self.shift_factor[1])
                 y_rng = np.random.uniform(self.shift_factor[0], self.shift_factor[1])
-                x_ = max(0, int(x + w * x_rng))
-                y_ = max(0, int(y + h * y_rng))
+                x_ = max(0, int(x + x_rng))
+                y_ = max(0, int(y + y_rng))
                 if x_ + w_min > x_max or y_ + h_min > y_max:
                     pass
 
@@ -224,8 +219,8 @@ class RadomZeroCrop(TransformsBase):
                 w_ = min(int(w * w_rng), x_max - x_)
                 h_ = min(int(h * h_rng), y_max - y_)
 
-            if self.is_center:
-                x_, y_, w_, h_ = self.centralization(x_, y_, w_, h_, x_center_times2, y_center_times2)
+            # if self.is_center:
+            #     x_, y_, w_, h_ = self.centralization(x_, y_, w_, h_, x_center_times2, y_center_times2)
 
             crop_mask[:, y_:y_ + h_, x_:x_ + w_] = 1
             label_ = deepcopy(label)

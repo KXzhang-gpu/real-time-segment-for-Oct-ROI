@@ -1,5 +1,6 @@
 # -*- coding: UTF-8 -*-
 import os
+import sys
 import time
 
 import torch
@@ -41,7 +42,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
         raise ValueError(r"Can't find the corresponding stage for training")
 
     run_loss = AverageMeter()
-    train_loop = tqdm(loader, desc='Epoch{}'.format(epoch))
+    train_loop = tqdm(loader, desc='Epoch{}'.format(epoch), file=sys.stdout)
     for batch_data in train_loop:
         image, target = batch_data["image"], batch_data["label"]
         image = image.to(torch.device(args.device))
@@ -54,9 +55,11 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
             if args.stage == 'supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, target, softmax=False)
+                loop_info = {'ce': '{:.3f}'.format(loss1), 'dice': '{:.3f}'.format(loss2)}
             elif args.stage == 'weak_supervise':
                 loss1 = loss_func1(predict, target)
                 loss2 = loss_func2(predict, image, args.threshold)
+                loop_info = {'projection': '{:.3f}'.format(loss1), 'pairwise': '{:.3f}'.format(loss2)}
             loss = 1.0 * loss1 + 1.0 * loss2
 
         if args.amp:
@@ -69,7 +72,8 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
 
         run_loss.update(loss.item(), n=args.batch_size)
         if args.rank == 0:
-            train_loop.set_postfix(loss='{:.4f}'.format(loss.item()),
+            train_loop.set_postfix(loop_info,
+                                   loss='{:.4f}'.format(loss.item()),
                                    lr='{:.8f}'.format(optimizer.param_groups[0]['lr']),
                                    time='{:.2f}s'.format(time.time() - start_time))
 
@@ -90,8 +94,8 @@ def val_epoch(model, loader, args):
         raise ValueError(r"Can't find the corresponding stage for training")
     run_loss = AverageMeter()
     with torch.no_grad():
-        val_loop = tqdm(loader, desc='Test')
-        for idx, batch_data in val_loop:
+        val_loop = tqdm(loader, desc='Test', file=sys.stdout)
+        for batch_data in val_loop:
             image, target = batch_data["image"], batch_data["label"]
 
             image, target = image.cuda(args.rank), target.cuda(args.rank)
@@ -101,11 +105,11 @@ def val_epoch(model, loader, args):
                 if args.stage == 'supervise':
                     loss1 = loss_func1(predict, target)
                     loss2 = loss_func2(predict, target, softmax=False)
-                    val_loop.set_postfix(ce_loss='{:.3f}'.format(loss1), dice_loss='{:.3f}'.format(loss2))
+                    loop_info = {'ce': '{:.3f}'.format(loss1), 'dice': '{:.3f}'.format(loss2)}
                 elif args.stage == 'weak_supervise':
                     loss1 = loss_func1(predict, target)
                     loss2 = loss_func2(predict, image, args.threshold)
-                    val_loop.set_postfix(projection_loss='{:.3f}'.format(loss1), pairwise_loss='{:.3f}'.format(loss2))
+                    loop_info = {'projection': '{:.3f}'.format(loss1), 'pairwise': '{:.3f}'.format(loss2)}
                 loss = 1.0 * loss1 + 1.0 * loss2
 
                 # sigmoid for dice
@@ -127,7 +131,8 @@ def val_epoch(model, loader, args):
             run_acc.update(avg_acc, n=args.batch_size)
             run_loss.update(loss.item(), n=args.batch_size)
             if args.rank == 0:
-                val_loop.set_postfix(loss='{:.4f}'.format(loss.numpy()),
+                val_loop.set_postfix(loop_info,
+                                     loss='{:.4f}'.format(loss.numpy()),
                                      acc=avg_acc,
                                      time='{:.2f}s'.format(time.time() - start_time))
             start_time = time.time()
