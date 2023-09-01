@@ -15,7 +15,7 @@ def make_parser():
     # trainer settings
     parser.add_argument("--pretrain", default=None, type=str, help="root of pretrain weight")
     parser.add_argument("--max_epochs", default=1, type=int, help="max number of training epochs")
-    parser.add_argument("--batch_size", default=2, type=int, help="batch size of each epoch")
+    parser.add_argument("--batch_size", default=32, type=int, help="batch size of each epoch")
     parser.add_argument("--num_workers", default=0, type=int, help="number of workers")
     parser.add_argument("--device", default="cuda", type=str, help="device to be use, cuda or cpu")
     parser.add_argument("--n_classes", default=1, type=int, help="number of output channels")
@@ -58,9 +58,11 @@ def main(args):
     model.to(args.device)
 
     # build optimizer and scheduler
-    optimizer = torch.optim.RMSprop(model.parameters(), lr=args.optim_lr, weight_decay=1e-8, momentum=0.99)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.1, patience=5)\
+    # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.optim_lr, weight_decay=1e-8, momentum=0.99)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.optim_lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.1, patience=5)
 
+    torch.autograd.set_detect_anomaly(True)
     run_training(model=model,
                  train_loader=train_loader,
                  val_loader=val_loader,
