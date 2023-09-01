@@ -1,6 +1,7 @@
 # -*- coding: UTF-8 -*-
 import torch
 import argparse
+from torch import nn
 
 from model.unet_with_resnet import UNet
 from utils.dataset.get_loader import get_loader
@@ -14,17 +15,13 @@ def make_parser():
     parser = argparse.ArgumentParser(description="Unet segmentation training")
     # trainer settings
     parser.add_argument("--pretrain", default=None, type=str, help="root of pretrain weight")
-    parser.add_argument("--max_epochs", default=1, type=int, help="max number of training epochs")
+    parser.add_argument("--max_epochs", default=5, type=int, help="max number of training epochs")
     parser.add_argument("--batch_size", default=32, type=int, help="batch size of each epoch")
     parser.add_argument("--num_workers", default=0, type=int, help="number of workers")
     parser.add_argument("--device", default="cuda", type=str, help="device to be use, cuda or cpu")
     parser.add_argument("--n_classes", default=1, type=int, help="number of output channels")
     parser.add_argument("--stage", default="supervise", type=str, help="the stage of model training")
     parser.add_argument("--val_every", default=1, type=int, help="validation frequency")
-
-    # distributed
-    parser.add_argument("--rank", default=0, type=int, help="node rank for distributed training")
-    parser.add_argument("--distributed", action="store_true", help="start distributed training")
 
     # optimizer
     parser.add_argument("--optim_lr", default=0.5*1e-4, type=float, help="optimization learning rate")
@@ -49,10 +46,26 @@ def main(args):
     train_loader, val_loader = get_loader(args)
     print("Batch size is:", args.batch_size, ". Totol epoch:", args.max_epochs)
 
-    # build model
+    # build model and initialization
     model = UNet(n_classes=args.n_classes)
     if args.pretrain is not None:
         model.load_state_dict(torch.load(args.pretrain))
+    else:
+        for m in model.modules():
+            if isinstance(m, nn.Conv2d):
+                torch.nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                torch.nn.init.normal_(m.weight.data, 0, 0.01)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
     if args.device == 'cuda':
         assert torch.cuda.is_available(), "Please check your devices"
     model.to(args.device)
@@ -62,7 +75,7 @@ def main(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.optim_lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.1, patience=5)
 
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     run_training(model=model,
                  train_loader=train_loader,
                  val_loader=val_loader,
