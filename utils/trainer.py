@@ -4,8 +4,8 @@ import sys
 import time
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import GradScaler, autocast
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from tqdm import tqdm
 
@@ -71,11 +71,11 @@ def train_epoch(model, loader, optimizer, scaler, epoch, args):
             optimizer.step()
 
         run_loss.update(loss.item(), n=args.batch_size)
-        if args.rank == 0:
-            train_loop.set_postfix(loop_info,
-                                   loss='{:.4f}'.format(loss.item()),
-                                   lr='{:.8f}'.format(optimizer.param_groups[0]['lr']),
-                                   time='{:.2f}s'.format(time.time() - start_time))
+
+        train_loop.set_postfix(loop_info,
+                               loss='{:.4f}'.format(loss.item()),
+                               lr='{:.8f}'.format(optimizer.param_groups[0]['lr']),
+                               time='{:.2f}s'.format(time.time() - start_time))
 
     return run_loss.avg
 
@@ -98,7 +98,7 @@ def val_epoch(model, loader, args):
         for batch_data in val_loop:
             image, target = batch_data["image"], batch_data["label"]
 
-            image, target = image.cuda(args.rank), target.cuda(args.rank)
+            image, target = image.cuda(), target.cuda()
             with autocast(enabled=args.amp):
                 predict = model(image)
                 # loss
@@ -130,11 +130,11 @@ def val_epoch(model, loader, args):
             avg_acc = np.mean(np.array(acc_list))
             run_acc.update(avg_acc, n=args.batch_size)
             run_loss.update(loss.item(), n=args.batch_size)
-            if args.rank == 0:
-                val_loop.set_postfix(loop_info,
-                                     loss='{:.4f}'.format(loss.numpy()),
-                                     acc=avg_acc,
-                                     time='{:.2f}s'.format(time.time() - start_time))
+
+            val_loop.set_postfix(loop_info,
+                                 loss='{:.4f}'.format(loss.numpy()),
+                                 acc=avg_acc,
+                                 time='{:.2f}s'.format(time.time() - start_time))
             start_time = time.time()
     return run_acc.avg, run_loss.avg
 
@@ -214,75 +214,79 @@ def run_training(model,
     """
     early_stopping = EarlyStopping(patience=10, verbose=True)
     spend_time = 0
-    writer = None
-    if args.logdir is not None and args.rank == 0:
-        writer = SummaryWriter(log_dir=args.logdir)
-        if args.rank == 0:
-            print("Writing Tensorboard logs to ", args.logdir)
     scaler = None
     if args.amp:
         scaler = GradScaler()  # using float16 to reduce memory
-
     val_acc_max = 0.0
+
+    args.logdir = os.path.join(args.logdir, args.model_name)
+    if not os.path.exists(args.logdir):
+        os.makedirs(args.logdir)
+
+    writer = None
+    if args.logdir is not None:
+        writer = SummaryWriter(log_dir=args.logdir)
+        print("Writing Tensorboard logs to ", args.logdir)
+
     for epoch in range(start_epoch, args.max_epochs):
-        print(args.rank, "Epoch:", epoch)
+        print("Epoch:", epoch)
+        # training one epoch
         epoch_time = time.time()
         train_loss = train_epoch(model=model,
                                  loader=train_loader,
                                  optimizer=optimizer,
                                  scaler=scaler,
                                  epoch=epoch,
-                                 args=args)  # for training one epoch
+                                 args=args)
 
+        # update epoch output info
         spend_time += time.time() - epoch_time
-        if args.rank == 0:
-            # update epoch output info
-            print(
-                "Final training  {}/{}".format(epoch, args.max_epochs - 1),
-                "loss: {:.4f}".format(train_loss),
-                "time {:.2f}s".format(time.time() - epoch_time), )
+        print(
+            "Final training  {}/{}".format(epoch, args.max_epochs - 1),
+            "loss: {:.4f}".format(train_loss),
+            "time {:.2f}s".format(time.time() - epoch_time), )
 
-            with open(os.path.join(args.logdir, args.model_name + "_log.txt"), mode="a", encoding="utf-8") as f:
-                f.write(
-                    "Final training:{}/{},".format(epoch, args.max_epochs - 1) + "loss:{}".format(train_loss) + "\n")
-        if args.rank == 0 and writer is not None:
+        with open(os.path.join(args.logdir, "train_log.txt"), mode="a", encoding="utf-8") as f:
+            f.write(
+                "Final training:{}/{},".format(epoch, args.max_epochs - 1) + " loss:{}".format(train_loss) + "\n")
+
+        if writer is not None:
             writer.add_scalar("train_loss", train_loss, epoch)
 
         if (epoch + 1) % args.val_every == 0:
-            if args.distributed:
-                torch.distributed.barrier()
             epoch_time = time.time()
             val_avg_acc, run_loss = val_epoch(model=model,
                                               loader=val_loader,
                                               args=args)
 
-            if args.rank == 0:
-                print(
-                    "Final validation  {}/{}".format(epoch, args.max_epochs - 1),
-                    "acc:", val_avg_acc,
-                    'loss:', run_loss,
-                    "time {:.2f}s".format(time.time() - epoch_time),
-                )
-                with open(os.path.join(args.logdir, "log.txt"), mode="a", encoding="utf-8") as f:
-                    f.write(
-                        "Final validation:{}/{},".format(epoch, args.max_epochs - 1) + "dice:{},".format(val_avg_acc)
-                        + "loss:{},".format(run_loss) + "\n")
-                if writer is not None:
-                    writer.add_scalar("val_acc", val_avg_acc, epoch)
+            print(
+                "Final validation  {}/{}".format(epoch, args.max_epochs - 1),
+                "acc:", val_avg_acc,
+                'loss:', run_loss,
+                "time {:.2f}s".format(time.time() - epoch_time),
+            )
+            with open(os.path.join(args.logdir, "val_log.txt"), mode="a", encoding="utf-8") as f:
+                f.write(
+                    "Final validation:{}/{},".format(epoch, args.max_epochs - 1) + " dice:{},".format(val_avg_acc)
+                    + " loss:{},".format(run_loss) + "\n")
 
-                # save model for each validation epoch
-                if args.save_checkpoint:
-                    file_path = os.path.join(args.save_path, args.model_name)
-                    if not os.path.exists(file_path):
-                        os.makedirs(file_path)
-                    save_checkpoint(model=model, file_path=file_path, file_name='epoch{}.pth'.format(epoch))
+            if writer is not None:
+                writer.add_scalar("val_loss", run_loss, epoch)
+                writer.add_scalar("val_acc", val_avg_acc, epoch)
 
-                    if val_avg_acc > val_acc_max:
-                        print("best has changed: ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
-                        val_acc_max = val_avg_acc
+            # save model for each validation epoch
+            if args.save_checkpoint:
+                file_path = os.path.join(args.save_path, args.model_name)
+                if not os.path.exists(file_path):
+                    os.makedirs(file_path)
+                save_checkpoint(model=model, file_path=file_path, file_name='epoch{}.pth'.format(epoch))
 
-                        # save best model
-                        save_checkpoint(model=model, file_path=file_path, file_name='best_model.pth')
+                if val_avg_acc > val_acc_max:
+                    print("best has changed: ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
+                    val_acc_max = val_avg_acc
+
+                    # save best model
+                    save_checkpoint(model=model, file_path=file_path, file_name='best_model.pth')
 
             # stop training if necessary
             early_stopping(val_avg_acc)
@@ -293,4 +297,5 @@ def run_training(model,
             # learning rate scheduler
             if scheduler is not None:
                 scheduler.step(-val_avg_acc)
+
     print("Training Finished !, Best Accuracy: ", val_acc_max, "Total time: {} s.".format(round(spend_time)))
